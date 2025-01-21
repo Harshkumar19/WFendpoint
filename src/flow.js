@@ -1,6 +1,5 @@
-/**
- * Server-side code for appointment scheduling flow
- */
+// flow.js
+import { getDb } from "./db.js";
 
 const SCREEN_RESPONSES = {
   SCHEDULE: {
@@ -16,8 +15,8 @@ const SCREEN_RESPONSES = {
           title: "Female",
         },
         {
-          id: "Kids",
-          title: "Kids",
+          id: "Unisex",
+          title: "Unisex",
         },
       ],
       times: [
@@ -36,29 +35,13 @@ const SCREEN_RESPONSES = {
       ],
     },
   },
-  CONFIRMATION: {
-    screen: "CONFIRMATION",
-    data: {
-      gender: "",
-      appointment_date: "",
-      appointment_time: "",
-      notes: "",
-    },
-  },
 };
 
 export const getNextScreen = async (decryptedBody) => {
   const { screen, data, action, flow_token } = decryptedBody;
 
-  // Log incoming request data
-  console.log("Incoming request:", {
-    screen,
-    data,
-    action,
-    flow_token,
-  });
+  console.log("Incoming request:", { screen, data, action, flow_token });
 
-  // Handle health check request
   if (action === "ping") {
     console.log("Health check ping received");
     return {
@@ -68,7 +51,6 @@ export const getNextScreen = async (decryptedBody) => {
     };
   }
 
-  // Handle error notification
   if (data?.error) {
     console.warn("Received client error:", data);
     return {
@@ -78,7 +60,6 @@ export const getNextScreen = async (decryptedBody) => {
     };
   }
 
-  // Handle initial flow request
   if (action === "INIT") {
     console.log("Initializing flow with SCHEDULE screen");
     return SCREEN_RESPONSES.SCHEDULE;
@@ -89,44 +70,41 @@ export const getNextScreen = async (decryptedBody) => {
 
     switch (screen) {
       case "SCHEDULE":
-        // Log appointment scheduling data
-        console.log("Appointment scheduling data:", data);
-        return {
-          screen: "CONFIRMATION",
-          data: {
+        try {
+          const db = getDb();
+          const appointmentsCollection = db.collection("appointments");
+
+          const appointmentData = {
             gender: data.gender,
             appointment_date: data.appointment_date,
             appointment_time: data.appointment_time,
             notes: data.notes || "No additional notes provided.",
-          },
-        };
+            created_at: new Date(),
+            flow_token: flow_token,
+          };
 
-      case "CONFIRMATION":
-        // Log confirmation data
-        console.log("Processing confirmation:", data);
-        // Here you would typically save the appointment to your database
-        console.log("Appointment confirmed:", {
-          gender: data.gender,
-          date: data.appointment_date,
-          time: data.appointment_time,
-          notes: data.notes,
-        });
+          await appointmentsCollection.insertOne(appointmentData);
+          console.log("Appointment saved to database:", appointmentData);
 
-        return {
-          screen: "SUCCESS",
-          data: {
-            extension_message_response: {
-              params: {
-                flow_token,
-                appointment_confirmed: true,
+          return {
+            screen: "SUCCESS",
+            data: {
+              extension_message_response: {
+                params: {
+                  flow_token,
+                  appointment_confirmed: true,
+                },
               },
             },
-          },
-        };
+          };
+        } catch (error) {
+          console.error("Error saving appointment:", error);
+          throw error;
+        }
 
       default:
         console.error("Unhandled screen:", screen);
-        throw new Error(Unhandled);
+        throw new Error(`Unhandled screen type: ${screen}`);
     }
   }
 
@@ -135,43 +113,3 @@ export const getNextScreen = async (decryptedBody) => {
     "Unhandled endpoint request. Make sure you handle the request action & screen logged above."
   );
 };
-
-// Example test code
-const testFlow = async () => {
-  // Test INIT
-  const initResponse = await getNextScreen({
-    action: "INIT",
-    data: {},
-  });
-  console.log("INIT Response:", initResponse);
-
-  // Test scheduling appointment
-  const scheduleResponse = await getNextScreen({
-    action: "data_exchange",
-    screen: "SCHEDULE",
-    data: {
-      gender: "male",
-      appointment_date: "2025-01-23",
-      appointment_time: "0_morning",
-      notes: "First time visit",
-    },
-  });
-  console.log("Schedule Response:", scheduleResponse);
-
-  // Test confirmation
-  const confirmResponse = await getNextScreen({
-    action: "data_exchange",
-    screen: "CONFIRMATION",
-    data: {
-      gender: "male",
-      appointment_date: "2025-01-23",
-      appointment_time: "0_morning",
-      notes: "First time visit",
-    },
-    flow_token: "test-token",
-  });
-  console.log("Confirmation Response:", confirmResponse);
-};
-
-// Uncomment to run test
-// testFlow();

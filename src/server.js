@@ -1,10 +1,4 @@
-/**
- * Copyright (c) Meta Platforms, Inc. and affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
+// server.js
 import express from "express";
 import {
   decryptRequest,
@@ -12,14 +6,15 @@ import {
   FlowEndpointException,
 } from "./encryption.js";
 import { getNextScreen } from "./flow.js";
+import { connectToDatabase } from "./db.js";
 import crypto from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
+
 const app = express();
 
 app.use(
   express.json({
-    // store the raw request body to use it for signature verification
     verify: (req, res, buf, encoding) => {
       req.rawBody = buf?.toString(encoding || "utf8");
     },
@@ -28,14 +23,8 @@ app.use(
 
 const { APP_SECRET, PRIVATE_KEY, PASSPHRASE = "", PORT = "3000" } = process.env;
 
-/*
-Example:
-```-----[REPLACE THIS] BEGIN RSA PRIVATE KEY-----
-MIIE...
-...
-...AQAB
------[REPLACE THIS] END RSA PRIVATE KEY-----```
-*/
+// Initialize database connection when server starts
+connectToDatabase().catch(console.error);
 
 app.post("/", async (req, res) => {
   if (!PRIVATE_KEY) {
@@ -45,8 +34,6 @@ app.post("/", async (req, res) => {
   }
 
   if (!isRequestSignatureValid(req)) {
-    // Return status code 432 if request signature does not match.
-    // To learn more about return error codes visit: https://developers.facebook.com/docs/whatsapp/flows/reference/error-codes#endpoint_error_codes
     return res.status(432).send();
   }
 
@@ -64,32 +51,28 @@ app.post("/", async (req, res) => {
   const { aesKeyBuffer, initialVectorBuffer, decryptedBody } = decryptedRequest;
   console.log("💬 Decrypted Request:", decryptedBody);
 
-  // TODO: Uncomment this block and add your flow token validation logic.
-  // If the flow token becomes invalid, return HTTP code 427 to disable the flow and show the message in `error_msg` to the user
-  // Refer to the docs for details https://developers.facebook.com/docs/whatsapp/flows/reference/error-codes#endpoint_error_codes
-
-  /*
-  if (!isValidFlowToken(decryptedBody.flow_token)) {
-    const error_response = {
-      error_msg: `The message is no longer available`,
-    };
-    return res
-      .status(427)
+  try {
+    const screenResponse = await getNextScreen(decryptedBody);
+    console.log("👉 Response to Encrypt:", screenResponse);
+    res.send(
+      encryptResponse(screenResponse, aesKeyBuffer, initialVectorBuffer)
+    );
+  } catch (error) {
+    console.error("Error processing request:", error);
+    res
+      .status(500)
       .send(
-        encryptResponse(error_response, aesKeyBuffer, initialVectorBuffer)
+        encryptResponse(
+          { error: "Internal server error" },
+          aesKeyBuffer,
+          initialVectorBuffer
+        )
       );
   }
-  */
-
-  const screenResponse = await getNextScreen(decryptedBody);
-  console.log("👉 Response to Encrypt:", screenResponse);
-
-  res.send(encryptResponse(screenResponse, aesKeyBuffer, initialVectorBuffer));
 });
 
 app.get("/", (req, res) => {
-  res.send(`<pre>Nothing to see here.
-Checkout README.md to start.</pre>`);
+  res.send(`<pre>Nothing to see here.\nCheckout README.md to start.</pre>`);
 });
 
 app.listen(PORT, () => {
@@ -112,7 +95,6 @@ function isRequestSignatureValid(req) {
     return false;
   }
 
-  // Ensure the header has the expected format
   if (!signatureHeader.startsWith("sha256=")) {
     console.error("Error: Invalid signature format.");
     return false;
@@ -120,7 +102,7 @@ function isRequestSignatureValid(req) {
 
   const signatureBuffer = Buffer.from(
     signatureHeader.replace("sha256=", ""),
-    "hex" // Use "hex" instead of "utf-8" for SHA-256 HMAC
+    "hex"
   );
 
   const hmac = crypto.createHmac("sha256", APP_SECRET);
