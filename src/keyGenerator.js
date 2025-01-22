@@ -5,51 +5,91 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-/* The script will generate a public and private key pair and log the same in the console.
- * Copy paste the private key into your /.env file and public key should be added to your account.
- * For more details visit: https://developers.facebook.com/docs/whatsapp/flows/guides/implementingyourflowendpoint#upload_public_key
- *
- * Run this script using command below:
- *
- *             node src/keyGenerator.js {passphrase}
- *
- */
-
 import crypto from "crypto";
 
-const passphrase = process.argv[2];
-if (!passphrase) {
-  throw new Error(
-    "Passphrase is empty. Please include passphrase argument to generate the keys like: node src/keyGenerator.js {passphrase}"
+export const decryptRequest = (body, privatePem, passphrase) => {
+  const { encrypted_aes_key, encrypted_flow_data, initial_vector } = body;
+
+  const privateKey = crypto.createPrivateKey({ key: privatePem, passphrase });
+  let decryptedAesKey = null;
+  try {
+    // decrypt AES key created by client
+    decryptedAesKey = crypto.privateDecrypt(
+      {
+        key: privateKey,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: "sha256",
+      },
+      Buffer.from(encrypted_aes_key, "base64")
+    );
+  } catch (error) {
+    console.error(error);
+    /*
+    Failed to decrypt. Please verify your private key.
+    If you change your public key. You need to return HTTP status code 421 to refresh the public key on the client
+    */
+    throw new FlowEndpointException(
+      421,
+      "Failed to decrypt the request. Please verify your private key."
+    );
+  }
+
+  // decrypt flow data
+  const flowDataBuffer = Buffer.from(encrypted_flow_data, "base64");
+  const initialVectorBuffer = Buffer.from(initial_vector, "base64");
+
+  const TAG_LENGTH = 16;
+  const encrypted_flow_data_body = flowDataBuffer.subarray(0, -TAG_LENGTH);
+  const encrypted_flow_data_tag = flowDataBuffer.subarray(-TAG_LENGTH);
+
+  const decipher = crypto.createDecipheriv(
+    "aes-128-gcm",
+    decryptedAesKey,
+    initialVectorBuffer
   );
-}
+  decipher.setAuthTag(encrypted_flow_data_tag);
 
-try {
-  const keyPair = crypto.generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-    publicKeyEncoding: {
-      type: "spki",
-      format: "pem",
-    },
-    privateKeyEncoding: {
-      type: "pkcs1",
-      format: "pem",
-      cipher: "des-ede3-cbc",
-      passphrase,
-    },
-  });
+  const decryptedJSONString = Buffer.concat([
+    decipher.update(encrypted_flow_data_body),
+    decipher.final(),
+  ]).toString("utf-8");
 
-  console.log(`Successfully created your public private key pair. Please copy the below values into your /.env file
-************* COPY PASSPHRASE & PRIVATE KEY BELOW TO .env FILE *************
-PASSPHRASE="${passphrase}"
+  return {
+    decryptedBody: JSON.parse(decryptedJSONString),
+    aesKeyBuffer: decryptedAesKey,
+    initialVectorBuffer,
+  };
+};
 
-PRIVATE_KEY="${keyPair.privateKey}"
-************* COPY PASSPHRASE & PRIVATE KEY ABOVE TO .env FILE *************
+export const encryptResponse = (
+  response,
+  aesKeyBuffer,
+  initialVectorBuffer
+) => {
+  // flip initial vector
+  const flipped_iv = [];
+  for (const pair of initialVectorBuffer.entries()) {
+    flipped_iv.push(~pair[1]);
+  }
 
-************* COPY PUBLIC KEY BELOW *************
-${keyPair.publicKey}
-************* COPY PUBLIC KEY ABOVE *************
-`);
-} catch (err) {
-  console.error("Error while creating public private key pair:", err);
-}
+  // encrypt response data
+  const cipher = crypto.createCipheriv(
+    "aes-128-gcm",
+    aesKeyBuffer,
+    Buffer.from(flipped_iv)
+  );
+  return Buffer.concat([
+    cipher.update(JSON.stringify(response), "utf-8"),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]).toString("base64");
+};
+
+export const FlowEndpointException = class FlowEndpointException extends Error {
+  constructor(statusCode, message) {
+    super(message);
+
+    this.name = this.constructor.name;
+    this.statusCode = statusCode;
+  }
+};

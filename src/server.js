@@ -26,11 +26,25 @@ const { APP_SECRET, PRIVATE_KEY, PASSPHRASE = "", PORT = "3000" } = process.env;
 // Initialize database connection when server starts
 connectToDatabase().catch(console.error);
 
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy" });
+});
+
 app.post("/", async (req, res) => {
   if (!PRIVATE_KEY) {
     throw new Error(
       'Private key is empty. Please check your env variable "PRIVATE_KEY".'
     );
+  }
+
+  // Handle unencrypted health check
+  if (req.body?.action === "health_check") {
+    return res.status(200).json({
+      data: {
+        status: "healthy",
+      },
+    });
   }
 
   if (!isRequestSignatureValid(req)) {
@@ -54,6 +68,12 @@ app.post("/", async (req, res) => {
   try {
     const screenResponse = await getNextScreen(decryptedBody);
     console.log("👉 Response to Encrypt:", screenResponse);
+
+    // Don't encrypt health check responses
+    if (decryptedBody.action === "health_check") {
+      return res.status(200).json(screenResponse);
+    }
+
     res.send(
       encryptResponse(screenResponse, aesKeyBuffer, initialVectorBuffer)
     );
@@ -72,7 +92,9 @@ app.post("/", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send(`<pre>Nothing to see here.\nCheckout README.md to start.</pre>`);
+  res
+    .status(200)
+    .send(`<pre>Nothing to see here.\nCheckout README.md to start.</pre>`);
 });
 
 app.listen(PORT, () => {

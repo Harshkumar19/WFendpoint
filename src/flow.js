@@ -5,67 +5,63 @@ const SCREEN_RESPONSES = {
   SCHEDULE: {
     screen: "SCHEDULE",
     data: {
-      gender: [
-        {
-          id: "male",
-          title: "Male",
-        },
-        {
-          id: "female",
-          title: "Female",
-        },
-        {
-          id: "Unisex",
-          title: "Unisex",
-        },
+      appointment_type: [
+        { id: "online", title: "Online" },
+        { id: "offline", title: "In-Store" },
       ],
-      times: [
-        {
-          id: "0_morning",
-          title: "09:00 AM - 11:00 AM",
-        },
-        {
-          id: "1_afternoon",
-          title: "02:00 PM - 04:00 PM",
-        },
-        {
-          id: "2_evening",
-          title: "05:00 PM - 07:00 PM",
-        },
+      gender: [
+        { id: "male", title: "Male" },
+        { id: "female", title: "Female" },
+        { id: "Unisex", title: "Unisex" },
+      ],
+      appointment_time: [
+        { id: "slot_00_01", title: "12:00 AM - 01:00 AM" },
+        { id: "slot_03_04", title: "03:00 AM - 04:00 AM" },
+        { id: "slot_06_07", title: "06:00 AM - 07:00 AM" },
+        { id: "slot_09_10", title: "09:00 AM - 10:00 AM" },
+        { id: "slot_12_13", title: "12:00 PM - 01:00 PM" },
+        { id: "slot_15_16", title: "03:00 PM - 04:00 PM" },
+        { id: "slot_18_19", title: "06:00 PM - 07:00 PM" },
+        { id: "slot_21_22", title: "09:00 PM - 10:00 PM" },
       ],
     },
   },
 };
 
 export const getNextScreen = async (decryptedBody) => {
-  const { screen, data, action, flow_token } = decryptedBody;
+  const { screen, data, action, flow_token, version } = decryptedBody;
 
-  console.log("Incoming request:", { screen, data, action, flow_token });
+  console.log("Incoming request:", {
+    screen,
+    data,
+    action,
+    flow_token,
+    version,
+  });
 
-  if (action === "ping") {
-    console.log("Health check ping received");
+  // Handle health check
+  if (action === "health_check") {
     return {
       data: {
-        status: "active",
+        status: "healthy",
       },
     };
   }
 
-  if (data?.error) {
-    console.warn("Received client error:", data);
-    return {
-      data: {
-        acknowledged: true,
-      },
-    };
-  }
-
-  if (action === "INIT") {
+  // Handle INIT action
+  if (action === "INIT" && version === "3.0") {
     console.log("Initializing flow with SCHEDULE screen");
     return SCREEN_RESPONSES.SCHEDULE;
   }
 
-  if (action === "data_exchange") {
+  // Handle BACK action
+  if (action === "BACK" && version === "3.0") {
+    console.log("Handling back navigation");
+    return SCREEN_RESPONSES.SCHEDULE;
+  }
+
+  // Handle data exchange
+  if (action === "data_exchange" && version === "3.0") {
     console.log("Processing data exchange for screen:", screen);
 
     switch (screen) {
@@ -75,16 +71,23 @@ export const getNextScreen = async (decryptedBody) => {
           const appointmentsCollection = db.collection("appointments");
 
           const appointmentData = {
+            appointment_type: data.appointment_type,
             gender: data.gender,
             appointment_date: data.appointment_date,
             appointment_time: data.appointment_time,
             notes: data.notes || "No additional notes provided.",
             created_at: new Date(),
             flow_token: flow_token,
+            status: "pending",
           };
 
           await appointmentsCollection.insertOne(appointmentData);
           console.log("Appointment saved to database:", appointmentData);
+
+          const locationText =
+            data.appointment_type === "online"
+              ? "We'll send you the meeting link before the appointment."
+              : "We look forward to seeing you at our store!";
 
           return {
             screen: "SUCCESS",
@@ -93,6 +96,7 @@ export const getNextScreen = async (decryptedBody) => {
                 params: {
                   flow_token,
                   appointment_confirmed: true,
+                  message: `Your ${data.appointment_type} appointment has been scheduled for ${data.appointment_date} at ${data.appointment_time}. ${locationText}`,
                 },
               },
             },
@@ -109,7 +113,5 @@ export const getNextScreen = async (decryptedBody) => {
   }
 
   console.error("Unhandled request body:", decryptedBody);
-  throw new Error(
-    "Unhandled endpoint request. Make sure you handle the request action & screen logged above."
-  );
+  throw new Error("Unhandled endpoint request");
 };
