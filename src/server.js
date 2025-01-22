@@ -15,7 +15,7 @@ MIIE...
 -----END RSA PRIVATE KEY-----
 */
 
-app.post("/data", async ({ body }, res) => {
+app.post("/", async ({ body }, res) => {
   const { decryptedBody, aesKeyBuffer, initialVectorBuffer } = decryptRequest(
     body,
     PRIVATE_KEY,
