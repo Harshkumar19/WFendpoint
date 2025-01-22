@@ -1,69 +1,101 @@
 import express from "express";
-import { decryptRequest, encryptResponse, FlowEndpointException } from "./encryption.js";
-import { getNextScreen } from "./flow.js";
-import { connectToDatabase } from "./db.js";
-import dotenv from "dotenv";
-dotenv.config();
+import crypto from "crypto";
 
+const PORT = 3000;
 const app = express();
-const { PRIVATE_KEY, PASSPHRASE = "", PORT = "3000" } = process.env;
+app.use(express.json());
 
-app.use(
-  express.json({
-    verify: (req, res, buf, encoding) => {
-      req.rawBody = buf?.toString(encoding || "utf8");
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+/* 
+Example:
+-----BEGIN RSA PRIVATE KEY-----
+MIIE...
+...
+...AQAB
+-----END RSA PRIVATE KEY-----
+*/
+
+app.post("/data", async ({ body }, res) => {
+  const { decryptedBody, aesKeyBuffer, initialVectorBuffer } = decryptRequest(
+    body,
+    PRIVATE_KEY,
+  );
+
+  const { screen, data, version, action } = decryptedBody;
+  // Return the next screen & data to the client
+  const screenData = {
+    screen: "SCREEN_NAME",
+    data: {
+      some_key: "some_value",
     },
-  })
-);
+  };
 
-// Initialize database connection
-connectToDatabase().catch(console.error);
-
-app.post("/", async (req, res) => {
-  if (!PRIVATE_KEY) {
-    console.error('Private key is missing. Please check your environment variables.');
-    return res.status(500).send();
-  }
-
-  let decryptedRequest;
-  try {
-    // Decrypt the incoming request
-    decryptedRequest = decryptRequest(req.body, PRIVATE_KEY, PASSPHRASE);
-  } catch (err) {
-    console.error("Decryption failed:", err);
-    if (err instanceof FlowEndpointException) {
-      return res.status(err.statusCode).send();
-    }
-    return res.status(500).send();
-  }
-
-  const { aesKeyBuffer, initialVectorBuffer, decryptedBody } = decryptedRequest;
-  console.log("Decrypted Request:", decryptedBody);
-
-  let responsePayload;
-  try {
-    // Process the request and generate a response payload
-    responsePayload = await getNextScreen(decryptedBody);
-    console.log("Response Payload:", responsePayload);
-  } catch (error) {
-    console.error("Error processing request:", error);
-    responsePayload = { error: "Internal server error" };
-  }
-
-  try {
-    // Encrypt the response payload
-    const encryptedResponse = encryptResponse(
-      responsePayload,
-      aesKeyBuffer,
-      initialVectorBuffer
-    );
-    res.status(200).send(encryptedResponse);
-  } catch (encryptionError) {
-    console.error("Encryption failed:", encryptionError);
-    res.status(500).send();
-  }
+  // Return the response as plaintext
+  res.send(encryptResponse(screenData, aesKeyBuffer, initialVectorBuffer));
 });
+
+const decryptRequest = (body,privatePem) => {
+  const { encrypted_aes_key, encrypted_flow_data, initial_vector } = body;
+
+  // Decrypt the AES key created by the client
+  const decryptedAesKey = crypto.privateDecrypt(
+    {
+      key: crypto.createPrivateKey(privatePem),
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    Buffer.from(encrypted_aes_key, "base64"),
+  );
+
+  // Decrypt the Flow data
+  const flowDataBuffer = Buffer.from(encrypted_flow_data, "base64");
+  const initialVectorBuffer = Buffer.from(initial_vector, "base64");
+
+  const TAG_LENGTH = 16;
+  const encrypted_flow_data_body = flowDataBuffer.subarray(0, -TAG_LENGTH);
+  const encrypted_flow_data_tag = flowDataBuffer.subarray(-TAG_LENGTH);
+
+  const decipher = crypto.createDecipheriv(
+    "aes-128-gcm",
+    decryptedAesKey,
+    initialVectorBuffer,
+  );
+  decipher.setAuthTag(encrypted_flow_data_tag);
+
+  const decryptedJSONString = Buffer.concat([
+    decipher.update(encrypted_flow_data_body),
+    decipher.final(),
+  ]).toString("utf-8");
+
+  return {
+    decryptedBody: JSON.parse(decryptedJSONString),
+    aesKeyBuffer: decryptedAesKey,
+    initialVectorBuffer,
+  };
+};
+
+const encryptResponse = (
+  response,
+  aesKeyBuffer,
+  initialVectorBuffer,
+) => {
+  // Flip the initialization vector
+  const flipped_iv = [];
+  for (const pair of initialVectorBuffer.entries()) {
+    flipped_iv.push(~pair[1]);
+  }
+  // Encrypt the response data
+  const cipher = crypto.createCipheriv(
+    "aes-128-gcm",
+    aesKeyBuffer,
+    Buffer.from(flipped_iv),
+  );
+  return Buffer.concat([
+    cipher.update(JSON.stringify(response), "utf-8"),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]).toString("base64");
+};
 
 app.listen(PORT, () => {
-  console.log(`Server is listening on port: ${PORT}`);
-});
+  console.log(`App is listening`);});
