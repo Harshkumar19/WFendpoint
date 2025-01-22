@@ -1,5 +1,7 @@
 // server.js
 import express from "express";
+import { Buffer } from "buffer"; // Ensure this import is available
+
 import {
   decryptRequest,
   encryptResponse,
@@ -31,10 +33,18 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "healthy" });
 });
 
+
 app.post("/", (req, res) => {
-  res.status(200).json({
+  const responsePayload = {
     message: "Request received and processed successfully.",
-  });
+  };
+
+  // Convert response payload to a JSON string and encode it to Base64
+  const base64Response = Buffer.from(JSON.stringify(responsePayload)).toString(
+    "base64"
+  );
+
+  res.status(200).send(base64Response);
 });
 
 
