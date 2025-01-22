@@ -31,65 +31,72 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "healthy" });
 });
 
-app.post("/", async (req, res) => {
-  if (!PRIVATE_KEY) {
-    throw new Error(
-      'Private key is empty. Please check your env variable "PRIVATE_KEY".'
-    );
-  }
-
-  // Handle unencrypted health check
-  if (req.body?.action === "health_check") {
-    return res.status(200).json({
-      data: {
-        status: "healthy",
-      },
-    });
-  }
-
-  if (!isRequestSignatureValid(req)) {
-    return res.status(432).send();
-  }
-
-  let decryptedRequest = null;
-  try {
-    decryptedRequest = decryptRequest(req.body, PRIVATE_KEY, PASSPHRASE);
-  } catch (err) {
-    console.error(err);
-    if (err instanceof FlowEndpointException) {
-      return res.status(err.statusCode).send();
-    }
-    return res.status(500).send();
-  }
-
-  const { aesKeyBuffer, initialVectorBuffer, decryptedBody } = decryptedRequest;
-  console.log("💬 Decrypted Request:", decryptedBody);
-
-  try {
-    const screenResponse = await getNextScreen(decryptedBody);
-    console.log("👉 Response to Encrypt:", screenResponse);
-
-    // Don't encrypt health check responses
-    if (decryptedBody.action === "health_check") {
-      return res.status(200).json(screenResponse);
-    }
-
-    res.send(
-      encryptResponse(screenResponse, aesKeyBuffer, initialVectorBuffer)
-    );
-  } catch (error) {
-    console.error("Error processing request:", error);
-    res
-      .status(500)
-      .send(
-        encryptResponse(
-          { error: "Internal server error" },
-          aesKeyBuffer,
-          initialVectorBuffer
-        )
-      );
-  }
+app.post("/", (req, res) => {
+  res.status(200).json({
+    message: "Request received and processed successfully.",
+  });
 });
+
+
+// app.post("/", async (req, res) => {
+//   if (!PRIVATE_KEY) {
+//     throw new Error(
+//       'Private key is empty. Please check your env variable "PRIVATE_KEY".'
+//     );
+//   }
+
+//   // Handle unencrypted health check
+//   if (req.body?.action === "health_check") {
+//     return res.status(200).json({
+//       data: {
+//         status: "healthy",
+//       },
+//     });
+//   }
+
+//   if (!isRequestSignatureValid(req)) {
+//     return res.status(432).send();
+//   }
+
+//   let decryptedRequest = null;
+//   try {
+//     decryptedRequest = decryptRequest(req.body, PRIVATE_KEY, PASSPHRASE);
+//   } catch (err) {
+//     console.error(err);
+//     if (err instanceof FlowEndpointException) {
+//       return res.status(err.statusCode).send();
+//     }
+//     return res.status(500).send();
+//   }
+
+//   const { aesKeyBuffer, initialVectorBuffer, decryptedBody } = decryptedRequest;
+//   console.log("💬 Decrypted Request:", decryptedBody);
+
+//   try {
+//     const screenResponse = await getNextScreen(decryptedBody);
+//     console.log("👉 Response to Encrypt:", screenResponse);
+
+//     // Don't encrypt health check responses
+//     if (decryptedBody.action === "health_check") {
+//       return res.status(200).json(screenResponse);
+//     }
+
+//     res.send(
+//       encryptResponse(screenResponse, aesKeyBuffer, initialVectorBuffer)
+//     );
+//   } catch (error) {
+//     console.error("Error processing request:", error);
+//     res
+//       .status(500)
+//       .send(
+//         encryptResponse(
+//           { error: "Internal server error" },
+//           aesKeyBuffer,
+//           initialVectorBuffer
+//         )
+//       );
+//   }
+// });
 
 app.get("/", (req, res) => {
   res
